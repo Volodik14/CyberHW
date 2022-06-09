@@ -1,0 +1,129 @@
+import numpy as np
+from PIL import Image
+import math
+ 
+q = 6
+ 
+def to_bits(image):
+    s = ''
+    for i in range(image.shape[0]):
+        for j in range(image.shape[1]):
+            for k in range(image.shape[2]):
+                for p in range(8):
+                    if (image[i][j][k] & (1 << p)) != 0:
+                        s += '1'
+                    else:
+                        s += '0'
+    return s
+ 
+    
+def from_bits(shape, s):
+    ind = 0
+    res = np.zeros(shape)
+    for i in range(shape[0]):
+        for j in range(shape[1]):
+            for k in range(shape[2]):
+                p = s[ind:ind+8]
+                ind += 8
+                res[i][j][k] = int('0b' + p[::-1], 2)
+    return res
+
+def encode(source_image, secret_bits):
+    stegoimage = source_image.copy()
+    ind = 0
+    mse = 0
+    count_secret_bits = len(secret_bits)
+    for i in range(source_image.shape[0]):
+        for j in range(source_image.shape[1]):
+            for k in range(source_image.shape[2]):
+                stegoimage[i][j][k] = encode_pixel(source_image[i][j][k], int(secret_bits[ind]))
+                mse += (int(stegoimage[i][j][k]) - int(source_image[i][j][k]))**2
+                ind += 1
+                if ind == count_secret_bits:
+                    break
+            if ind == count_secret_bits:
+                break
+        if ind == count_secret_bits:
+            break
+    capacity = image.shape[0] * image.shape[1] * image.shape[2]
+    mse /= (capacity)
+    psnr = 10.0 * math.log10(255 * 255 / mse)
+    ec = len(secret_bits) / capacity
+    return stegoimage, capacity, mse, psnr, ec
+    
+def decode(image, width, height):
+    max_len = width * height * 3 * 8
+    secret_bits = ""
+    count = 0
+    print("Decoding...")
+    for i in range(image.shape[0]):
+        for j in range(image.shape[1]):
+            for k in range(image.shape[2]):
+                zero = encode_pixel(image[i][j][k], 0)
+                one = encode_pixel(image[i][j][k], 1)
+                if abs(image[i][j][k] - one) < abs(image[i][j][k] - zero):
+                    secret_bits += '1'
+                else:
+                    secret_bits += '0'
+                count += 1
+                if max_len == count:
+                    break
+            if max_len == count:
+                break
+        if max_len == count:
+            break
+    decoded_image_array = from_bits((width, height, 3), secret_bits)
+    decoded_image = Image.fromarray(decoded_image_array.astype(np.uint8))
+    return decoded_image
+    
+def encode_pixel(pixel, value):
+    return q * (pixel // q) + (q // 2) * value
+ 
+    
+print("QIM Steganography")
+print("1: Encode image")
+print("2: Decode image")
+func = input()
+if func == '1':
+    print("Source image:")
+    src = input()
+    image = np.array(Image.open(src))
+    print("Secret image path:")
+    image_path = input()
+    print("Encoding...")
+    sercet_image_src = (Image.open(image_path))
+    secret_image = np.array(sercet_image_src)
+    secret_bits = to_bits(secret_image)
+    width, height = sercet_image_src.size
+    with open('size.txt', 'w') as f:
+        f.write(str(width) + '\n')
+        f.write(str(height))
+    stegoimage, capacity, mse, psnr, ec = encode(image, secret_bits)
+    print("Encoding done!")
+    print('Count of bits in source image:', capacity * 8, 'bits')
+    print('MSE =', mse)
+    print('PSNR(dB) =', psnr)
+    print('EC(bpp) =', ec)
+    result = Image.fromarray(stegoimage.astype(np.uint8))
+    
+    print("Encoded image path:")
+    encoded_image_path = input()
+    result.save(encoded_image_path)
+    print("Saved!")
+else:
+    print("Encoded image path:")
+    encoded_image_path = input()
+    image = np.array(Image.open(encoded_image_path))
+    width = 0
+    height = 0
+    with open("size.txt", "rb") as file:
+        lines = file.readlines()
+        lines = [line.rstrip() for line in lines]
+        width = int(lines[0])
+        height = int(lines[1])
+    decoded_image = decode(image, width, height)
+    print("Decoding done!")
+    print("Decoded image path:")
+    decoded_image_path = input()
+    decoded_image.save(decoded_image_path)
+    print("Saved!")
