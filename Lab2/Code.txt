@@ -1,0 +1,236 @@
+import numpy as np
+from PIL import Image
+import math
+ 
+    
+    
+    
+arnold_iters_count = 10
+block_size = 4
+T = 45
+
+def delete_alpha(image_name):
+    new_image = Image.open(image_name).convert('RGB')
+    new_image.save(image_name)
+
+def image_to_bits(image):
+    s = ''
+    for i in range(image.shape[0]):  # height
+        for j in range(image.shape[1]):  # width
+            for k in range(image.shape[2]):  # каналы
+                # конвертим в двоичную с 8ю битами
+                one_channel = int(image[i][j][k])
+                s += '{0:08b}'.format(one_channel)
+ 
+    return s
+    
+def bits_to_image(s, shape):
+    im_res = np.zeros(shape)
+    iter = 0
+    for i in range(shape[0]):  # height
+        for j in range(shape[1]):  # width
+            for k in range(shape[2]):  # каналы
+                channel = s[(iter * 8): ((iter * 8) + 8)]
+                iter += 1
+                if (iter * 8) - 1 >= len(s):
+                    return im_res
+                im_res[i][j][k] = int('0b' + channel, 2)
+    return im_res
+
+def arnold_encode(secret_image_np, width, height):
+    secret_image_processed = secret_image_np.copy()
+    for count in range(arnold_iters_count):
+        temporary_image = secret_image_processed.copy()
+        for i in range(width):
+            for j in range(height):
+                temporary_image[(i + j) % width][(i + 2 * j) % height] =\
+                    secret_image_processed[i][j].copy()
+        secret_image_processed = temporary_image.copy()
+    return secret_image_processed
+
+def arnold_decode(secret_image_np, width, height):
+    secret_image_processed = secret_image_np.copy()
+    for count in range(arnold_iters_count):
+        temporary_image = secret_image_processed.copy()
+        for i in range(width):
+            for j in range(height):
+                temporary_image[(2*i - j + width * 2) % width][(-i + j + height * 2) % height]\
+                    = secret_image_processed[i][j].copy()
+        secret_image_processed = temporary_image.copy()
+    return secret_image_processed
+
+
+def embed_secret_to_container(container_image, secret_bits):
+    stegoimage = container_image.copy()
+ 
+    bits_iterator = 0
+    square_dif = 0
+    outliers_count = 0
+    secret_bits_count = len(secret_bits)
+ 
+    for k in range(container_image.shape[2]):
+        for i in range(0, container_image.shape[0], block_size):
+            for j in range(0, container_image.shape[1], block_size):
+                # check block size
+                if i + block_size >= container_image.shape[0] or j + block_size >= container_image.shape[1]:
+                    continue
+ 
+                if (bits_iterator >= secret_bits_count):
+                    continue
+ 
+                w = secret_bits[bits_iterator]
+                bits_iterator += 1
+ 
+                dcc = 0
+                for p in range(i, i + block_size):
+                    for q in range(j, j + block_size):
+                        dcc += container_image[p][q][k]
+ 
+                # corners
+                if w == '1':
+                    c_low = (dcc // T) * T + 0.25 * T
+                    c_high = ((dcc // T) + 1) * T + 0.25 * T
+                else:
+                    c_low = ((dcc // T) - 1) * T + 0.75 * T
+                    c_high = (dcc // T) * T + 0.75 * T
+ 
+                # optimal corners
+                if abs(c_low - dcc) <= abs(c_high - dcc):
+                    oc = c_low
+                else:
+                    oc = c_high
+ 
+                # if w == '0', oc < 0
+                if oc < 0:
+                    oc = c_high
+ 
+                # embed block
+                for p in range(i, i + block_size):
+                    for q in range(j, j + block_size):
+                        koef = int((oc - dcc) / (block_size ** 2))
+                        current_channel_value = int(container_image[p][q][k] + koef)
+ 
+                        if current_channel_value < 0 or current_channel_value > 255:
+                            # channels out of bounds
+                            outliers_count += 1
+ 
+ 
+                        stegoimage[p][q][k] = int(min(max(current_channel_value, 0), 255))
+ 
+                        square_dif += (int(stegoimage[p][q][k]) - (container_image[p][q][k])) ** 2
+ 
+    channels_count = container_image.shape[0] * container_image.shape[1] * container_image.shape[2]
+    mse = square_dif / channels_count
+    capacity = channels_count * 8
+    psnr = 10.0 * math.log10(255 * 255 / mse)
+    ec = secret_bits_count / channels_count
+    return stegoimage, capacity, mse, psnr, ec, outliers_count
+ 
+def decode_main_algorithm(stegoimage, width, height):
+    secret_bits = ""
+    secret_bits_max_len = width * height * 3 * 8
+    for k in range(stegoimage.shape[2]):
+        for i in range(0, stegoimage.shape[0], block_size):
+            for j in range(0, stegoimage.shape[1], block_size):
+                if i + block_size >= stegoimage.shape[0] or j + block_size >= stegoimage.shape[1]:
+                    continue
+ 
+                if (secret_bits_max_len == len(secret_bits)):
+                    continue
+ 
+                dcc = 0
+                for p in range(i, i + block_size):
+                    for q in range(j, j + block_size):
+                        dcc += stegoimage[p][q][k]
+ 
+                if (dcc % T) < 0.5 * T:
+                    secret_bits += '1'
+                else:
+                    secret_bits += '0'
+ 
+    return secret_bits
+
+print("1: Encode image")
+print("2: Decode image")
+func = input()
+if func == "1":
+    print("Source image:")
+    src = input()
+    container_image_array = np.array(Image.open(src)) 
+    print(Image.open(src))
+ 
+    print("Secret image path:")
+    secret_image_path = input()
+    secret_image_array = np.array(Image.open(secret_image_path))
+    sercet_image_src = Image.open(secret_image_path)
+    print(sercet_image_src)
+    width, height = sercet_image_src.size
+    with open('size.txt', 'w') as f:
+        f.write(str(width) + '\n')
+        f.write(str(height))
+ 
+    secret_image_arnold = arnold_encode(secret_image_array, width, height)
+    secret_bits = image_to_bits(secret_image_arnold)
+    
+    print("Encoding...")
+    stegoimage, capacity, mse, psnr, ec, outliers_count = embed_secret_to_container(container_image_array, secret_bits)
+    print("Encoding done!")
+    print('Count of bits in source image:', capacity * 8, 'bits')
+    print('MSE =', mse)
+    print('PSNR(dB) =', psnr)
+    print('EC(bpp) =', ec)
+    print("Outliers count:", outliers_count)
+    encoded_image = Image.fromarray(stegoimage.astype(np.uint8))
+    print("Encoded image path:")
+    encoded_image_path = input()
+    encoded_image.save(encoded_image_path)
+    print("Saved!")
+    
+elif func == "2":
+    print("Encoded image path:")
+    encoded_image_path = input()
+    stegoimage = np.array(Image.open(encoded_image_path))
+    width = 0
+    height = 0
+    with open("size.txt", "rb") as file:
+        lines = file.readlines()
+        lines = [line.rstrip() for line in lines]
+        width = int(lines[0])
+        height = int(lines[1])
+    secret_bits = decode_main_algorithm(stegoimage, width, height)
+    secret_image_matrix = bits_to_image(secret_bits, (width, height, 3))
+    secret_image_unprocessed_matrix = arnold_decode(secret_image_matrix, width, height)
+    
+    ber = 0
+    ncc_1 = ncc_2 = ncc_3 = 0
+    
+    secret_bits_max_len = width * height * 3 * 8
+ 
+    decoded_bits = image_to_bits(secret_image_unprocessed_matrix)
+    print("Original secret image path:")
+    encoded_image_path = input()
+    print("Decoding...")
+    original_image = np.array(Image.open(encoded_image_path))
+    original_bits = image_to_bits(original_image)
+    
+    for i in range(secret_bits_max_len):
+        if original_bits[i] != decoded_bits[i]:
+            ber+= 1
+ 
+        p1 = ord(decoded_bits[i]) - ord('0')
+        p2 = ord(original_bits[i]) - ord('0')
+ 
+        ncc_1 += (p1 * p2)
+        ncc_2 += (p1 ** 2)
+        ncc_3 += (p2 ** 2)
+        
+    print('NCC =', (ncc_1 / (math.sqrt(ncc_2) * math.sqrt(ncc_3))))
+    print('BER(% of wrong bits) =', ber / secret_bits_max_len)
+ 
+    print("Decoding done!")
+    print("Decoded image path:")
+    decoded_image_path = input()
+    secret_image = Image.fromarray(secret_image_unprocessed_matrix.astype(np.uint8))
+    secret_image.save(decoded_image_path)
+    print("Saved!")
+    
