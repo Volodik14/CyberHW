@@ -1,0 +1,322 @@
+import numpy as np
+from PIL import Image
+import math
+from scipy.fft import dct, idct
+ 
+    
+arnold_iters = 10
+block_size = 8
+T = 125
+Z = 2
+Th = 80
+K = 12
+eps = 0.00001
+ 
+def to_bits(image):
+    s = ''
+    for i in range(image.shape[0]):
+        for j in range(image.shape[1]):
+            for k in range(image.shape[2]):
+                for p in range(8):
+                    if (int(image[i][j][k]) & (1 << p)) != 0:
+                        s += '1'
+                    else:
+                        s += '0'
+    return s
+
+def from_bits(shape, s):
+    ind = 0
+    res = np.zeros(shape)
+    for i in range(shape[0]):
+        for j in range(shape[1]):
+            for k in range(shape[2]):
+                p = s[ind:ind+8]
+                ind += 8
+                if ind - 1 >= len(s):
+                    break
+                res[i][j][k] = int('0b' + p[::-1], 2)
+            if ind - 1 >= len(s):
+                break
+        if ind - 1 >= len(s):
+            break
+    return res
+ 
+def check(image, ind, jnd):
+    f1 = ind >= 0 and ind < image.shape[0]
+    f2 = jnd >= 0 and jnd < image.shape[1]
+    f3 = (ind + block_size - 1) >= 0 and (ind + block_size - 1) < image.shape[0]
+    f4 = (jnd + block_size - 1) >= 0 and (jnd + block_size - 1) < image.shape[1]
+    return f1 and f2 and f3 and f4
+ 
+
+def arnold(secret_image, width, height):
+    for iter_num in range(arnold_iters):
+        new_image = secret_image.copy()
+        for i in range(width):
+            for j in range(height):
+                new_image[(i + j) % width][(i + j * 2) % height] = secret_image[i][j].copy()
+        secret_image = new_image.copy()
+    secret_bits = to_bits(secret_image)
+    return secret_bits
+
+def arnold_decode(ans, width, height):
+    for iter_num in range(arnold_iters):
+        new_image = ans.copy()
+        for i in range(width):
+            for j in range(height):
+                new_image[(i * 2 - j + width * 5) % width][(-i + j + height * 5) % height] = ans[i][j].copy()
+        ans2 = new_image.copy()
+    return to_bits(ans2)
+
+
+def DCT(image):
+    image = image.astype(float)
+    for i in range(image.shape[0]):
+        for j in range(image.shape[1]):
+            for k in range(image.shape[2]):
+                image[i][j][k] -= 128
+    for k in range(image.shape[2]):
+        for i in range(0, image.shape[0], block_size):
+            for j in range(0, image.shape[1], block_size):
+                if i + block_size >= image.shape[0] or j + block_size >= image.shape[1]:
+                    continue
+                image[i:i + block_size, j:j + block_size, k] = dct(image[i:i + block_size, j:j + block_size, k])
+    return image
+    
+def algorithm(image):
+    ind = -1
+    for k in range(image.shape[2]):
+        for i in range(0, image.shape[0], block_size):
+            for j in range(0, image.shape[1], block_size):
+                if i + block_size >= image.shape[0] or j + block_size >= image.shape[1]:
+                    continue
+                ind += 1
+                if (ind >= len(secret_bits)):
+                    continue
+                arr_for_med = [
+                    image[i][j + 1][k],     image[i][j + 2][k],     image[i][j + 3][k],
+                    image[i + 1][j][k], image[i + 1][j + 1][k], image[i + 1][j + 2][k],
+                    image[i + 2][j][k], image[i + 2][j + 1][k],
+                    image[i + 3][j][k]
+                ]
+                arr_for_med.sort()
+                med_ind = 4
+                med = arr_for_med[med_ind]
+                dcc = image[i][j][k]
+                forcem = None
+                if abs(dcc) > 1000 or abs(dcc) < 1:
+                    forcem = abs(Z * med)
+                else:
+                    forcem = abs(Z * ((dcc - med) / dcc))
+                if abs(forcem) < eps:
+                    forcem = Z
+                if check(image, i - block_size, j):
+                    x = i + 3
+                    y = j + 3
+                    b_diff = image[x - block_size][y][k]
+                elif check(image, i + block_size, j):
+                    x = i + 1
+                    y = j + 5
+                    b_diff = image[x + block_size][y][k]
+                elif check(image, i, j - block_size):
+                    x = i + 5
+                    y = j
+                    b_diff = image[x][y - block_size][k]
+                else:
+                    x = i + 6
+                    y = j + 2
+                    b_diff = image[x][y + block_size][k]
+                diff = image[x][y][k] - b_diff
+                if secret_bits[ind] == '1':
+                    if diff > Th - K:
+                        while diff > Th - K:
+                            image[x][y][k] -= forcem
+                            diff = image[x][y][k] - b_diff
+                    elif diff < K and diff > -(Th // 2):
+                        while diff < K:
+                            image[x][y][k] += forcem
+                            diff = image[x][y][k] - b_diff
+                    else:
+                        while diff > -(Th + K):
+                            image[x][y][k] -= forcem
+                            diff = image[x][y][k] - b_diff
+                else:
+                    if diff > (Th // 2):
+                        while diff <= (Th + K):
+                            image[x][y][k] += forcem
+                            diff = image[x][y][k] - b_diff
+                    elif diff > -K and diff < (Th // 2):
+                        while diff >= -K:
+                            image[x][y][k] -= forcem
+                            diff = image[x][y][k] - b_diff
+                    else:
+                        while diff <= K - Th:
+                            image[x][y][k] += forcem
+                            diff = image[x][y][k] - b_diff
+    return image
+
+def algorithm_decode(image):
+    secret_bits = ''
+    for k in range(image.shape[2]):
+        for i in range(0, image.shape[0], block_size):
+            for j in range(0, image.shape[1], block_size):
+                if i + block_size >= image.shape[0] or j + block_size >= image.shape[1]:
+                    continue
+                if (max_len == len(secret_bits)):
+                    continue
+                arr_for_med = [
+                                        image[i][j + 1][k],     image[i][j + 2][k],     image[i][j + 3][k],
+                    image[i + 1][j][k], image[i + 1][j + 1][k], image[i + 1][j + 2][k],
+                    image[i + 2][j][k], image[i + 2][j + 1][k],
+                    image[i + 3][j][k]
+                ]
+                arr_for_med.sort()
+                med_ind = 4
+                med = arr_for_med[med_ind]
+                while med < eps and med_ind < 9:
+                    med = arr_for_med[med_ind]
+                    med_ind += 1
+                if med_ind == 9:
+                    med = 0.001
+                dcc = 0
+                for p in range(i, i + block_size):
+                    for q in range(j, j + block_size):
+                        dcc += image[p][q][k]
+                forcem = None
+                if abs(dcc) > 1000 or abs(dcc) < 1:
+                    forcem = abs(Z * med)
+                else:
+                    forcem = abs(Z * ((dcc - med) / dcc))
+                if check(image, i - block_size, j):
+                    x = i + 3
+                    y = j + 3
+                    b_diff = image[x - block_size][y][k]
+                elif check(image, i + block_size, j):
+                    x = i + 1
+                    y = j + 5
+                    b_diff = image[x + block_size][y][k]
+                elif check(image, i, j - block_size):
+                    x = i + 5
+                    y = j
+                    b_diff = image[x][y - block_size][k]
+                else:
+                    x = i + 6
+                    y = j + 2
+                    b_diff = image[x][y + block_size][k]
+                diff = image[x][y][k] - b_diff
+                if (diff < -Th) or (diff > 0 and diff < Th):
+                    secret_bits += '1'
+                else:
+                    secret_bits += '0'
+    return secret_bits
+    
+    
+    
+def IDCT(image):
+    mse = 0
+    for k in range(image.shape[2]):
+        for i in range(0, image.shape[0], block_size):
+            for j in range(0, image.shape[1], block_size):
+                if i + block_size >= image.shape[0] or j + block_size >= image.shape[1]:
+                    continue
+                image[i:i + block_size, j:j + block_size, k] = idct(image[i:i + block_size, j:j + block_size, k])
+    for i in range(image.shape[0]):
+        for j in range(image.shape[1]):
+            for k in range(image.shape[2]):
+                image[i][j][k] = max(min((round(image[i][j][k]) + 128), 255), 0)
+                mse += (image[i][j][k] - float(stegoimage[i][j][k]))**2
+    return image, mse
+
+
+print("1: Embed image")
+print("2: Extract image")
+func = input()
+if func == '1':
+    print("Source image:")
+    src = input()
+    image = np.array(Image.open(src))
+    print(Image.open(src))
+    print("Secret image path:")
+    secret_image_path = input()
+    secret_image = np.array(Image.open(secret_image_path))
+    stegoimage = image.copy()
+    cnt_outliers = 0
+    sercet_image_src = Image.open(secret_image_path)
+    print(sercet_image_src)
+    width, height = sercet_image_src.size
+    with open('size.txt', 'w') as f:
+        f.write(str(width) + '\n')
+        f.write(str(height))
+    
+    print("Embeding...")
+    
+    secret_bits = arnold(secret_image, width, height)
+    image = DCT(image)
+    image = algorithm(image)
+    image, mse = IDCT(image)
+    
+    print("Embeding done!")
+    capacity = ((image.shape[0] * image.shape[1]) // (block_size ** 2)) * image.shape[2]
+    mse /= (image.shape[0] * image.shape[1] * image.shape[2])
+    psnr = 10.0 * math.log10(255 * 255 / mse)
+    ec = len(secret_bits) / capacity
+    print('Count of bits in source image:', capacity, 'bit')
+    print('MSE =', mse)
+    print('PSNR(dB) =', psnr)
+    print('EC(bpp) =', ec)
+    encoded_image = Image.fromarray(image.astype(np.uint8))
+    print("Result image path:")
+    encoded_image_path = input()
+    encoded_image.save(encoded_image_path)
+    print("Saved!")
+    
+elif func == "2":
+    print("Image path:")
+    encoded_image_path = input()
+    
+    image = np.array(Image.open(encoded_image_path))
+    print("Original watermark path:")
+    encoded_image_path = input()
+    original_image = np.array(Image.open(encoded_image_path))
+    orig_dwm = to_bits(original_image)
+    ber = 0
+    width = 0
+    height = 0
+    with open("size.txt", "rb") as file:
+        lines = file.readlines()
+        lines = [line.rstrip() for line in lines]
+        width = int(lines[0])
+        height = int(lines[1])
+    print("width =", width, "height =", height)
+    print("Extracting...")
+    max_len = width * height * 3 * 8
+    secret_bits = ''
+    image = DCT(image)
+    secret_bits = algorithm_decode(image)
+    ans = from_bits((width, height, 3), secret_bits)
+    # Arnold's unprocessing
+    for iter_num in range(arnold_iters):
+        new_image = ans.copy()
+        for i in range(width):
+            for j in range(height):
+                new_image[(i * 2 - j + width * 5) % width][(-i + j + height * 5) % height] = ans[i][j].copy()
+        ans = new_image.copy()
+    ss = to_bits(ans)
+    ncc_1 = ncc_2 = ncc_3 = 0
+    for i in range(max_len):
+        if ss[i] != orig_dwm[i]:
+            ber += 1
+        p1 = ord(ss[i]) - ord('0')
+        p2 = ord(orig_dwm[i]) - ord('0')
+        ncc_1 += (p1 * p2)
+        ncc_2 += (p1 ** 2)
+        ncc_3 += (p2 ** 2)
+    print('NCC =', (ncc_1 / (math.sqrt(ncc_2) * math.sqrt(ncc_3))))
+    print('BER =', ber / max_len)
+    print("Extracting done!")
+    print("Extracted image path:")
+    decoded_image_path = input()
+    secret_image = Image.fromarray(ans.astype(np.uint8))
+    secret_image.save(decoded_image_path)
+    print("Saved!")
+    

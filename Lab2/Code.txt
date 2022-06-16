@@ -150,8 +150,8 @@ def decode_main_algorithm(stegoimage, width, height):
  
     return secret_bits
 
-print("1: Encode image")
-print("2: Decode image")
+print("1: Embed image")
+print("2: Extract image")
 func = input()
 if func == "1":
     print("Source image:")
@@ -172,9 +172,9 @@ if func == "1":
     secret_image_arnold = arnold_encode(secret_image_array, width, height)
     secret_bits = image_to_bits(secret_image_arnold)
     
-    print("Encoding...")
+    print("Embeding...")
     stegoimage, capacity, mse, psnr, ec, outliers_count = embed_secret_to_container(container_image_array, secret_bits)
-    print("Encoding done!")
+    print("Embeding done!")
     print('Count of bits in source image:', capacity * 8, 'bits')
     print('MSE =', mse)
     print('PSNR(dB) =', psnr)
@@ -187,7 +187,7 @@ if func == "1":
     print("Saved!")
     
 elif func == "2":
-    print("Encoded image path:")
+    print("Image path:")
     encoded_image_path = input()
     stegoimage = np.array(Image.open(encoded_image_path))
     width = 0
@@ -207,9 +207,9 @@ elif func == "2":
     secret_bits_max_len = width * height * 3 * 8
  
     decoded_bits = image_to_bits(secret_image_unprocessed_matrix)
-    print("Original secret image path:")
+    print("Original watermark path:")
     encoded_image_path = input()
-    print("Decoding...")
+    print("Extracting...")
     original_image = np.array(Image.open(encoded_image_path))
     original_bits = image_to_bits(original_image)
     
@@ -227,8 +227,8 @@ elif func == "2":
     print('NCC =', (ncc_1 / (math.sqrt(ncc_2) * math.sqrt(ncc_3))))
     print('BER(% of wrong bits) =', ber / secret_bits_max_len)
  
-    print("Decoding done!")
-    print("Decoded image path:")
+    print("Extracting done!")
+    print("Extracted image path:")
     decoded_image_path = input()
     secret_image = Image.fromarray(secret_image_unprocessed_matrix.astype(np.uint8))
     secret_image.save(decoded_image_path)
